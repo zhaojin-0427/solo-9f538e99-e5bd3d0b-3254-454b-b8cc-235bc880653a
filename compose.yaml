@@ -1,0 +1,27 @@
+services:
+  web:
+    build: .
+    image: archive-key-picker:latest
+    container_name: archive-key-picker-web
+    # 同时映射常见端口：主用 http://localhost:8000 ，Flask 习惯端口 5000、备用 8080 也可访问
+    ports:
+      - "8000:8000"
+      - "5000:8000"
+      - "8080:8000"
+    environment:
+      ARCHIVE_DB: /data/archive.db
+      PORT: "8000"
+      # 复测时可 POST /api/admin/reset 清空；正式环境可设为 0 关闭
+      ENABLE_RESET: "1"
+    volumes:
+      - archive-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  archive-data:

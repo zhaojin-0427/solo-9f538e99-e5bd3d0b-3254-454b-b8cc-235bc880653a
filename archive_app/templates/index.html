@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if result %}
+<section class="banner banner-{{ 'ok' if result.ok else 'err' }}"
+         data-testid="result-banner"
+         data-ok="{{ '1' if result.ok else '0' }}"
+         role="{{ 'status' if result.ok else 'alert' }}">
+  <strong>{{ result.message }}</strong>
+  {% if result.report and result.report.involved_ids %}
+  <div class="involved" data-testid="involved-ids">
+    <span>涉及原件号：</span>
+    {% for oid in result.report.involved_ids %}
+      <code class="bad-id" data-testid="bad-id">{{ oid }}</code>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if result.report and result.report.missing %}
+  <ul class="report-list" data-testid="missing-list">
+    {% for m in result.report.missing %}
+    <li>缺值：<code class="bad-id">{{ m.original_id }}</code>
+      缺少列 {{ m.columns|join('、') }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if result.report and result.report.collisions %}
+  <ul class="report-list" data-testid="collision-list">
+    {% for c in result.report.collisions %}
+    <li>撞键值 <code>{{ c.key }}</code>：
+      {% for oid in c.original_ids %}<code class="bad-id">{{ oid }}</code>{% if not loop.last %}、{% endif %}{% endfor %}
+      {% if c.reason == 'collides_with_existing' %}（与库内未换入的旧索引项相撞）{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if result.report and result.report.duplicate_ids %}
+  <p class="report-list">文件内重复原件号：
+    {% for oid in result.report.duplicate_ids %}<code class="bad-id">{{ oid }}</code> {% endfor %}
+  </p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="stats-grid" id="stats" data-testid="stats">
+  <div class="stat stat-primary">
+    <span class="stat-label">索引总条数（缩微目录原件记录）</span>
+    <span class="stat-value" id="index-total" data-testid="index-total">{{ total_items }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">交接键索引总条数</span>
+    <span class="stat-value" id="key-index-total" data-testid="key-index-total">{{ key_total }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">候选汇总读取 / 上限</span>
+    <span class="stat-value" id="summary-reads" data-testid="summary-reads">
+      {{ summary_rows_read }}<em> / {{ summary_cap }} 条</em>
+    </span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">本批读取索引项数（按本批原件号读旧明细）</span>
+    <span class="stat-value" id="batch-index-reads" data-testid="batch-index-reads">
+      {{ latest.catalog_reads if latest else 0 }}
+    </span>
+    <span class="stat-sub">交接键索引读取 {{ latest.index_reads if latest else 0 }} 项</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">本批写入 / 换入索引项数</span>
+    <span class="stat-value" id="batch-index-writes" data-testid="batch-index-writes">
+      {{ latest.catalog_writes if latest else 0 }}
+    </span>
+    <span class="stat-sub">交接键索引写入 {{ latest.index_writes if latest else 0 }} 项</span>
+  </div>
+</section>
+
+<p class="batch-line" id="batch-index-stats" data-testid="batch-index-stats"
+   data-reads="{{ latest.catalog_reads if latest else 0 }}"
+   data-writes="{{ latest.catalog_writes if latest else 0 }}"
+   data-index-reads="{{ latest.index_reads if latest else 0 }}"
+   data-index-writes="{{ latest.index_writes if latest else 0 }}"
+   data-detail-reads="{{ latest.detail_reads if latest else 0 }}">
+  {% if latest %}
+    最近批次 #{{ latest.id }}（{{ '补传' if latest.kind == 'supplement' else ('首批' if latest.kind == 'first' else '确认键') }}，
+    <span class="{{ 'text-ok' if latest.status == 'applied' else 'text-err' }}">
+      {{ '已接收入库' if latest.status == 'applied' else '已退回' }}</span>）：
+    本批读写的索引项数 —— 目录索引读取 <b>{{ latest.catalog_reads }}</b> 项、
+    写入/换入 <b>{{ latest.catalog_writes }}</b> 项；
+    交接键索引读取 <b>{{ latest.index_reads }}</b> 项、写入 <b>{{ latest.index_writes }}</b> 项。
+    补传只按本批原件号读取旧明细 <b id="batch-detail-reads" data-testid="batch-detail-reads">{{ latest.detail_reads }}</b> 条，
+    整批 {{ latest.total_rows }} 行
+    （新增 {{ latest.created_count }} / 同号覆盖 {{ latest.updated_count }}；
+    退批时写入为 0）。
+  {% else %}
+    尚无批次记录。上传首批 CSV 后在此显示索引总条数与本批读写的索引项数。
+  {% endif %}
+</p>
+
+<div class="layout-two-col">
+  <section class="card" id="upload-card" data-testid="upload-card">
+    <h2><span class="step">1</span>上传 CSV / 补传</h2>
+    <form id="upload-form" method="post" action="/upload"
+          enctype="multipart/form-data" data-testid="upload-form">
+      <label class="file-pick" for="file">
+        <input type="file" id="file" name="file"
+               accept=".csv,text/csv" required data-testid="file-input">
+        <span class="file-hint">选择 UTF-8（或 GB18030）编码的 .csv 文件</span>
+      </label>
+      {% if not schema %}
+      <button type="submit" class="btn btn-primary" id="upload-submit"
+              data-testid="upload-submit">上传首批 CSV</button>
+      <p class="hint">首批须含唯一原件号列，以及 4～8 个待选列
+        （如：馆代码、卷号、拍摄年、页号、缩微号）。系统会自动识别「原件号」表头，
+        识别不准时可用 <code>id_column</code> 指定。</p>
+      {% else %}
+      <button type="submit" class="btn btn-primary" id="upload-submit"
+              data-testid="upload-submit">上传补传 CSV</button>
+      <p class="hint">表头沿用首批（列集合一致即可，顺序不限）；同原件号整行覆盖。
+        补传按整批换入后的数据核对交接键：两行互换键值可以入库；
+        一旦有缺值或撞键，会报出涉及的原件号并退回整批。</p>
+      {% endif %}
+    </form>
+
+    {% if schema %}
+    <div class="schema-box" data-testid="schema-box">
+      <div><b>原件号列：</b><code id="id-column">{{ schema.id_column }}</code></div>
+      <div><b>待选列（{{ schema.columns|length }}）：</b>
+        {% for c in schema.columns %}<code class="col-chip">{{ c }}</code>{% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="card" id="key-card" data-testid="key-card">
+    <h2><span class="step">2</span>交接键</h2>
+
+    {% if not schema %}
+      <p class="hint">请先上传首批缩微目录 CSV，系统将列出所有最简候选键。</p>
+
+    {% elif handover %}
+      <div class="current-key" id="current-key" data-testid="current-key">
+        <p>交接键已启用（<b>只能选定一次，不可更改</b>）：</p>
+        <p class="key-columns">
+          {% for c in handover.columns %}<code class="col-chip col-chip-on">{{ c }}</code>
+          {% if not loop.last %}<span class="plus">＋</span>{% endif %}{% endfor %}
+        </p>
+        <p class="hint">确认时间：{{ handover.confirmed_at }} ｜ 索引 {{ key_total }} 条</p>
+        <a class="btn btn-download" id="download-mapping"
+           data-testid="download-mapping"
+           href="{{ url_for('web.download_mapping_csv') }}" download>
+          ⬇ 下载当前键值—原件号对照 CSV
+        </a>
+        <p class="hint">下载地址：<code>/mapping.csv</code>（另有 <code>/download</code> 别名）</p>
+      </div>
+
+    {% elif candidates|length == 0 %}
+      <p class="text-err"><b>当前没有合格的最简候选键。</b></p>
+      <p class="hint">每个列组合都存在缺值或行间重复。请核对首批 CSV 数据后重新上传。</p>
+
+    {% else %}
+      <form method="post" action="/confirm" id="confirm-form" data-testid="confirm-form">
+        <p class="hint">下列为全部 <b>{{ candidates|length }}</b> 个最简候选键
+          （键值每行齐全、行间互异，且去掉任一列后不再成键）。
+          档案员可选择一个；确认时会再次校验是否仍合格，且<b>只能选择一次</b>。</p>
+        <div class="candidate-list" id="candidate-list" data-testid="candidate-list">
+          {% for c in candidates %}
+          <label class="candidate-item" data-testid="candidate-item">
+            <input type="radio" name="mask" value="{{ c.mask }}" required
+                   data-testid="candidate-radio">
+            <span class="candidate-cols">
+              {% for col in c.columns %}<code class="col-chip">{{ col }}</code>
+              {% if not loop.last %}<span class="plus">＋</span>{% endif %}{% endfor %}
+            </span>
+            <span class="candidate-mask">#{{ c.mask }}</span>
+          </label>
+          {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-confirm" id="confirm-key-btn"
+                data-testid="confirm-key-btn">确认选定交接键（仅一次）</button>
+      </form>
+    {% endif %}
+  </section>
+</div>
+
+{% if schema and summary_rows %}
+<section class="card" id="summary-card">
+  <h2>候选键汇总（只读汇总表，本次查询读取 {{ summary_rows_read }} / {{ summary_cap }} 条）
+    {% if handover %}<span class="badge badge-ok">确认时快照</span>{% endif %}
+  </h2>
+  <details>
+    <summary>查看全部 {{ summary_rows|length }} 个列组合的齐全 / 唯一 / 候选判定</summary>
+    <table class="grid-table">
+      <thead><tr><th>mask</th><th>列组合</th><th>齐全</th><th>唯一</th>
+        <th>空值行数</th><th>最简候选键</th></tr></thead>
+      <tbody>
+      {% for s in summary_rows %}
+        <tr class="{{ 'row-candidate' if s.is_candidate }}">
+          <td>{{ s.mask }}</td>
+          <td>{% for c in s.columns %}<code>{{ c }}</code> {% endfor %}</td>
+          <td>{{ '✓' if s.complete else '—' }}</td>
+          <td>{{ '✓' if s.is_unique else '—' }}</td>
+          <td>{{ s.missing_count }}</td>
+          <td>{{ '★ 候选' if s.is_candidate else '' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </details>
+</section>
+{% endif %}
+
+<section class="card" id="history-card">
+  <h2>批次记录（含退批报告）</h2>
+  {% if not recent %}
+    <p class="hint">暂无上传批次。</p>
+  {% else %}
+  <table class="grid-table" data-testid="batch-table">
+    <thead><tr><th>#</th><th>时间</th><th>类型</th><th>文件</th><th>状态</th>
+      <th>行数</th><th>读明细</th><th>读索引</th><th>写索引</th><th>说明 / 涉及原件号</th></tr></thead>
+    <tbody>
+    {% for b in recent %}
+      <tr class="{{ 'row-rejected' if b.status == 'rejected' else 'row-applied' }}">
+        <td>{{ b.id }}</td>
+        <td class="nowrap">{{ b.created_at }}</td>
+        <td>{{ {'first':'首批','supplement':'补传','confirm':'确认键'}.get(b.kind, b.kind) }}</td>
+        <td class="filename" title="{{ b.filename or '' }}">{{ b.filename or '—' }}</td>
+        <td><span class="badge {{ 'badge-ok' if b.status == 'applied' else 'badge-err' }}">
+          {{ '已接收' if b.status == 'applied' else '整批退回' }}</span></td>
+        <td>{{ b.total_rows }}</td>
+        <td>{{ b.detail_reads }}</td>
+        <td>{{ b.index_reads }}</td>
+        <td>{{ b.index_writes }}</td>
+        <td class="msg-cell">
+          {{ b.message }}
+          {% if b.report and b.report.involved_ids %}
+            <div class="involved">
+              {% for oid in b.report.involved_ids %}<code class="bad-id">{{ oid }}</code>{% endfor %}
+            </div>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+{% endblock %}

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}缩微目录交接键管理{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand">
+      <span class="seal">档</span>
+      <div>
+        <h1>缩微目录候选键与交接键管理</h1>
+        <p class="tagline">旧扫描清册联表列挑选 · 最简候选键 · 一次性交接键 · 整批核对退批</p>
+      </div>
+    </div>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="footer">
+    <span>Flask + SQLite · 候选汇总上限 {{ 255 }} 个列组合（2⁸−1）</span>
+    <span>接口：<code>GET /api/candidates</code> · <code>POST /api/upload</code> ·
+      <code>POST /api/key/confirm</code> · <code>GET /mapping.csv</code> · <code>GET /healthz</code></span>
+  </footer>
+</div>
+</body>
+</html>
